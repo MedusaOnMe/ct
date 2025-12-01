@@ -1,63 +1,23 @@
 const axios = require('axios');
-const cheerio = require('cheerio');
 
-const HEADERS = {
-  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-  'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-  'Accept-Language': 'en-US,en;q=0.5',
-};
+// TikTok's free oEmbed endpoint - no auth required
+const OEMBED_URL = 'https://www.tiktok.com/oembed';
 
 async function scrapeTikTok(url) {
   try {
-    const response = await axios.get(url, {
-      headers: HEADERS,
-      timeout: 10000,
-      maxRedirects: 5
+    // Use TikTok's official oEmbed API
+    const response = await axios.get(OEMBED_URL, {
+      params: { url },
+      timeout: 10000
     });
 
-    const $ = cheerio.load(response.data);
+    const data = response.data;
 
-    // Try multiple methods to get thumbnail
-    let image =
-      $('meta[property="og:image"]').attr('content') ||
-      $('meta[name="twitter:image"]').attr('content') ||
-      $('video').attr('poster') ||
-      null;
+    // oEmbed returns: title, author_name, author_url, thumbnail_url, thumbnail_width, thumbnail_height, etc.
+    let name = data.title || 'TikTok Video';
 
-    // Get title/caption
-    let name =
-      $('meta[property="og:title"]').attr('content') ||
-      $('meta[name="twitter:title"]').attr('content') ||
-      $('title').text() ||
-      'TikTok Video';
-
-    // Get description
-    let description =
-      $('meta[property="og:description"]').attr('content') ||
-      $('meta[name="description"]').attr('content') ||
-      '';
-
-    // Try to extract view count from the page
-    // TikTok embeds JSON data in script tags
-    let views = null;
-    const scripts = $('script').toArray();
-    for (const script of scripts) {
-      const content = $(script).html();
-      if (content && content.includes('playCount')) {
-        try {
-          const match = content.match(/"playCount"\s*:\s*(\d+)/);
-          if (match) {
-            views = parseInt(match[1], 10);
-            break;
-          }
-        } catch (e) {
-          // Continue if parsing fails
-        }
-      }
-    }
-
-    // Clean up the name - remove " | TikTok" suffix
-    name = name.replace(/\s*\|\s*TikTok.*$/i, '').trim();
+    // Clean up the name - remove common suffixes
+    name = name.replace(/\s*#\w+/g, '').trim(); // Remove hashtags from title
 
     // Truncate if too long
     if (name.length > 100) {
@@ -68,10 +28,11 @@ async function scrapeTikTok(url) {
       success: true,
       source: 'tiktok',
       data: {
-        image,
+        image: data.thumbnail_url || null,
         name,
-        description,
-        views,
+        description: data.title || '',
+        author: data.author_name || null,
+        authorUrl: data.author_url || null,
         originalUrl: url
       }
     };
