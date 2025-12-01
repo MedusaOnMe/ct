@@ -73,7 +73,10 @@ app.post('/scrape', async (req, res) => {
 // TODO: Add pump.fun integration
 app.post('/launch', async (req, res) => {
   try {
-    const { url, ticker, name } = req.body;
+    // Trim whitespace from all inputs (Shortcuts can add newlines)
+    const url = (req.body.url || '').trim();
+    const ticker = (req.body.ticker || '').trim();
+    const name = (req.body.name || '').trim();
 
     // Validation
     if (!url) {
