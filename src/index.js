@@ -136,6 +136,7 @@ app.post('/launch', async (req, res) => {
       url,
       ticker: ticker.toUpperCase(),
       name: coinData.name,
+      image: coinData.image,
       success: true,
       source: scrapeResult.source
     });
