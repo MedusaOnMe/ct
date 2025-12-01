@@ -6,6 +6,15 @@ const { scrapeUrl } = require('./scrapers');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+// In-memory request log (keeps last 100)
+const requestLog = [];
+const MAX_LOG_SIZE = 100;
+
+function logRequest(entry) {
+  requestLog.unshift({ ...entry, timestamp: new Date().toISOString() });
+  if (requestLog.length > MAX_LOG_SIZE) requestLog.pop();
+}
+
 // Middleware
 app.use(cors());
 app.use(express.json());
@@ -37,6 +46,13 @@ app.post('/scrape', async (req, res) => {
 
     console.log(`[API] Scraping URL: ${url}`);
     const result = await scrapeUrl(url);
+
+    logRequest({
+      endpoint: '/scrape',
+      url,
+      success: result.success,
+      source: result.source || null
+    });
 
     if (!result.success) {
       return res.status(422).json(result);
@@ -105,6 +121,15 @@ app.post('/launch', async (req, res) => {
       originalUrl: url
     };
 
+    logRequest({
+      endpoint: '/launch',
+      url,
+      ticker: ticker.toUpperCase(),
+      success: true,
+      source: scrapeResult.source,
+      coinName: coinData.name
+    });
+
     // Placeholder response until pump.fun integration is added
     return res.json({
       success: true,
@@ -120,6 +145,30 @@ app.post('/launch', async (req, res) => {
       message: error.message
     });
   }
+});
+
+// Admin endpoint - view recent requests
+app.get('/admin', (req, res) => {
+  const stats = {
+    totalRequests: requestLog.length,
+    byEndpoint: {},
+    bySource: {},
+    recentLaunches: requestLog.filter(r => r.endpoint === '/launch').slice(0, 10)
+  };
+
+  requestLog.forEach(r => {
+    stats.byEndpoint[r.endpoint] = (stats.byEndpoint[r.endpoint] || 0) + 1;
+    if (r.source) {
+      stats.bySource[r.source] = (stats.bySource[r.source] || 0) + 1;
+    }
+  });
+
+  res.json({
+    name: 'CoinThis Admin',
+    uptime: process.uptime(),
+    stats,
+    recentRequests: requestLog.slice(0, 50)
+  });
 });
 
 // Start server
