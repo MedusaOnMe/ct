@@ -73,48 +73,44 @@ app.post('/scrape', async (req, res) => {
 // TODO: Add pump.fun integration
 app.post('/launch', async (req, res) => {
   try {
-    const { url, ticker } = req.body;
+    const { url, ticker, name } = req.body;
 
+    // Validation
     if (!url) {
-      return res.status(400).json({
-        success: false,
-        error: 'URL is required'
-      });
+      return res.type('text/plain').status(400).send('Error: URL is required');
     }
 
     if (!ticker) {
-      return res.status(400).json({
-        success: false,
-        error: 'Ticker is required'
-      });
+      return res.type('text/plain').status(400).send('Error: Ticker is required');
+    }
+
+    if (!name) {
+      return res.type('text/plain').status(400).send('Error: Name is required');
     }
 
     // Validate ticker format (alphanumeric, 1-10 chars)
     if (!/^[A-Za-z0-9]{1,10}$/.test(ticker)) {
-      return res.status(400).json({
-        success: false,
-        error: 'Ticker must be 1-10 alphanumeric characters'
-      });
+      return res.type('text/plain').status(400).send('Error: Ticker must be 1-10 letters/numbers, no spaces');
     }
 
-    console.log(`[API] Launching coin - URL: ${url}, Ticker: ${ticker}`);
+    // Validate name (max 30 chars)
+    if (name.length > 30) {
+      return res.type('text/plain').status(400).send('Error: Name must be 30 characters or less');
+    }
+
+    console.log(`[API] Launching coin - URL: ${url}, Ticker: ${ticker}, Name: ${name}`);
 
     // Step 1: Scrape the URL
     const scrapeResult = await scrapeUrl(url);
 
     if (!scrapeResult.success) {
-      return res.status(422).json({
-        success: false,
-        error: 'Failed to scrape URL',
-        details: scrapeResult.error
-      });
+      return res.type('text/plain').status(422).send(`Error: Couldn't fetch that URL\n${scrapeResult.error}`);
     }
 
     // Step 2: TODO - Launch on pump.fun
-    // For now, return what we would send to pump.fun
     const coinData = {
       ticker: ticker.toUpperCase(),
-      name: scrapeResult.data.name,
+      name: name.substring(0, 30),
       image: scrapeResult.data.image,
       description: scrapeResult.data.description || `Coined from ${scrapeResult.source}`,
       source: scrapeResult.source,
@@ -125,25 +121,28 @@ app.post('/launch', async (req, res) => {
       endpoint: '/launch',
       url,
       ticker: ticker.toUpperCase(),
+      name: coinData.name,
       success: true,
-      source: scrapeResult.source,
-      coinName: coinData.name
+      source: scrapeResult.source
     });
 
-    // Placeholder response until pump.fun integration is added
-    return res.json({
-      success: true,
-      message: 'Scrape successful - pump.fun integration pending',
-      coinData,
-      // pumpUrl: 'https://pump.fun/XXXXX' // Will be returned once integrated
-    });
+    // Human-readable response
+    const response = `
+COIN READY TO LAUNCH
+
+Name: ${coinData.name}
+Ticker: $${coinData.ticker}
+Source: ${coinData.source}
+
+Thumbnail: ${coinData.image || 'None found'}
+
+Status: Pump.fun integration pending
+`.trim();
+
+    return res.type('text/plain').send(response);
   } catch (error) {
     console.error('[API] Error:', error);
-    return res.status(500).json({
-      success: false,
-      error: 'Internal server error',
-      message: error.message
-    });
+    return res.type('text/plain').status(500).send(`Error: Something went wrong\n${error.message}`);
   }
 });
 
