@@ -18,6 +18,7 @@ function logRequest(entry) {
 // Middleware
 app.use(cors());
 app.use(express.json());
+app.use(express.text()); // Accept plain text too
 
 // Health check
 app.get('/', (req, res) => {
@@ -73,10 +74,20 @@ app.post('/scrape', async (req, res) => {
 // TODO: Add pump.fun integration
 app.post('/launch', async (req, res) => {
   try {
+    // Handle both JSON and text bodies (Shortcuts can send either)
+    let body = req.body;
+    if (typeof body === 'string') {
+      try {
+        body = JSON.parse(body);
+      } catch (e) {
+        return res.type('text/plain').status(400).send(`Error: Invalid JSON\nReceived: ${body.substring(0, 200)}`);
+      }
+    }
+
     // Trim whitespace from all inputs (Shortcuts can add newlines)
-    const url = (req.body.url || '').trim();
-    const ticker = (req.body.ticker || '').trim();
-    const name = (req.body.name || '').trim();
+    const url = (body.url || '').toString().trim();
+    const ticker = (body.ticker || '').toString().trim();
+    const name = (body.name || '').toString().trim();
 
     // Validation
     if (!url) {
@@ -93,7 +104,7 @@ app.post('/launch', async (req, res) => {
 
     // Validate ticker format (alphanumeric, 1-10 chars)
     if (!/^[A-Za-z0-9]{1,10}$/.test(ticker)) {
-      return res.type('text/plain').status(400).send('Error: Ticker must be 1-10 letters/numbers, no spaces');
+      return res.type('text/plain').status(400).send(`Error: Ticker must be 1-10 letters/numbers, no spaces\nReceived: "${ticker}" (${ticker.length} chars)`);
     }
 
     // Validate name (max 30 chars)
