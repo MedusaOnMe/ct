@@ -1,10 +1,20 @@
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
+const rateLimit = require('express-rate-limit');
 const { scrapeUrl } = require('./scrapers');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+
+// Rate limiting - 1 request per 90 seconds per IP
+const limiter = rateLimit({
+  windowMs: 90 * 1000, // 90 seconds
+  max: 1, // 1 request per window
+  message: 'Too many requests. Wait 90 seconds between launches.',
+  standardHeaders: true,
+  legacyHeaders: false,
+});
 
 // In-memory request log (keeps last 100)
 const requestLog = [];
@@ -72,7 +82,7 @@ app.post('/scrape', async (req, res) => {
 
 // Launch endpoint - scrape + launch coin
 // TODO: Add pump.fun integration
-app.post('/launch', async (req, res) => {
+app.post('/launch', limiter, async (req, res) => {
   try {
     // Handle both JSON and text bodies (Shortcuts can send either)
     let body = req.body;
