@@ -149,8 +149,6 @@ Name: ${coinData.name}
 Ticker: $${coinData.ticker}
 Source: ${coinData.source}
 
-Thumbnail: ${coinData.image || 'None found'}
-
 Status: Pump.fun integration pending
 `.trim();
 
