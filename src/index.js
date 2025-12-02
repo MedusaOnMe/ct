@@ -2,7 +2,7 @@ require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const rateLimit = require('express-rate-limit');
-const bs58 = require('bs58');
+const bs58 = require('bs58').default;
 const { scrapeUrl } = require('./scrapers');
 
 // Validate Solana wallet address
