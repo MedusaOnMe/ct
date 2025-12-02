@@ -99,9 +99,15 @@ app.post('/launch', limiter, async (req, res) => {
     }
 
     // Trim whitespace from all inputs (Shortcuts can add newlines)
+    const wallet = (body.wallet || '').toString().trim();
     const url = (body.url || '').toString().trim();
     const ticker = (body.ticker || '').toString().trim();
     const name = (body.name || '').toString().trim();
+
+    // Validate wallet if provided (Solana addresses are 32-44 base58 chars)
+    if (wallet && !/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(wallet)) {
+      return res.type('text/plain').status(400).send('Error: Invalid Solana wallet address');
+    }
 
     // Validation
     if (!url) {
@@ -126,7 +132,7 @@ app.post('/launch', limiter, async (req, res) => {
       return res.type('text/plain').status(400).send('Error: Name must be 30 characters or less');
     }
 
-    console.log(`[API] Launching coin - URL: ${url}, Ticker: ${ticker}, Name: ${name}`);
+    console.log(`[API] Launching coin - URL: ${url}, Ticker: ${ticker}, Name: ${name}, Wallet: ${wallet || 'none'}`);
 
     // Step 1: Scrape the URL
     const scrapeResult = await scrapeUrl(url);
@@ -142,12 +148,14 @@ app.post('/launch', limiter, async (req, res) => {
       image: scrapeResult.data.image,
       description: scrapeResult.data.description || `Coined from ${scrapeResult.source}`,
       source: scrapeResult.source,
-      originalUrl: url
+      originalUrl: url,
+      wallet: wallet || null
     };
 
     logRequest({
       endpoint: '/launch',
       ip: req.ip,
+      wallet: wallet || null,
       url,
       ticker: ticker.toUpperCase(),
       name: coinData.name,
@@ -157,12 +165,13 @@ app.post('/launch', limiter, async (req, res) => {
     });
 
     // Human-readable response
+    const walletLine = wallet ? `\nCreator Wallet: ${wallet.slice(0, 4)}...${wallet.slice(-4)}` : '';
     const response = `
 COIN READY TO LAUNCH
 
 Name: ${coinData.name}
 Ticker: $${coinData.ticker}
-Source: ${coinData.source}
+Source: ${coinData.source}${walletLine}
 
 Status: Pump.fun integration pending
 `.trim();
