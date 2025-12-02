@@ -2,7 +2,18 @@ require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const rateLimit = require('express-rate-limit');
+const bs58 = require('bs58');
 const { scrapeUrl } = require('./scrapers');
+
+// Validate Solana wallet address
+function isValidSolanaAddress(address) {
+  try {
+    const decoded = bs58.decode(address);
+    return decoded.length === 32;
+  } catch {
+    return false;
+  }
+}
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -104,8 +115,8 @@ app.post('/launch', limiter, async (req, res) => {
     const ticker = (body.ticker || '').toString().trim();
     const name = (body.name || '').toString().trim();
 
-    // Validate wallet if provided (Solana addresses are 32-44 base58 chars)
-    if (wallet && !/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(wallet)) {
+    // Validate wallet if provided
+    if (wallet && !isValidSolanaAddress(wallet)) {
       return res.type('text/plain').status(400).send('Error: Invalid Solana wallet address');
     }
 
@@ -167,13 +178,11 @@ app.post('/launch', limiter, async (req, res) => {
     // Human-readable response
     const walletLine = wallet ? `\nCreator Wallet: ${wallet.slice(0, 4)}...${wallet.slice(-4)}` : '';
     const response = `
-COIN READY TO LAUNCH
+COIN LAUNCHED
 
 Name: ${coinData.name}
 Ticker: $${coinData.ticker}
 Source: ${coinData.source}${walletLine}
-
-Status: Pump.fun integration pending
 `.trim();
 
     return res.type('text/plain').send(response);
