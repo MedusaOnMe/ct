@@ -7,6 +7,9 @@ const { scrapeUrl } = require('./scrapers');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+// Trust proxy (Railway, Heroku, etc.) to get real client IP
+app.set('trust proxy', 1);
+
 // Rate limiting - 1 request per 90 seconds per IP
 const limiter = rateLimit({
   windowMs: 90 * 1000, // 90 seconds
@@ -60,6 +63,7 @@ app.post('/scrape', async (req, res) => {
 
     logRequest({
       endpoint: '/scrape',
+      ip: req.ip,
       url,
       success: result.success,
       source: result.source || null
@@ -143,6 +147,7 @@ app.post('/launch', limiter, async (req, res) => {
 
     logRequest({
       endpoint: '/launch',
+      ip: req.ip,
       url,
       ticker: ticker.toUpperCase(),
       name: coinData.name,
@@ -175,6 +180,7 @@ app.get('/admin', (req, res) => {
     totalRequests: requestLog.length,
     byEndpoint: {},
     bySource: {},
+    byIP: {},
     recentLaunches: requestLog.filter(r => r.endpoint === '/launch').slice(0, 10)
   };
 
@@ -182,6 +188,9 @@ app.get('/admin', (req, res) => {
     stats.byEndpoint[r.endpoint] = (stats.byEndpoint[r.endpoint] || 0) + 1;
     if (r.source) {
       stats.bySource[r.source] = (stats.bySource[r.source] || 0) + 1;
+    }
+    if (r.ip) {
+      stats.byIP[r.ip] = (stats.byIP[r.ip] || 0) + 1;
     }
   });
 
