@@ -1,17 +1,4 @@
 const axios = require('axios');
-const cheerio = require('cheerio');
-
-const HEADERS = {
-  'User-Agent': 'Mozilla/5.0 (compatible; Discordbot/2.0; +https://discordapp.com)',
-  'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-  'Accept-Language': 'en-US,en;q=0.5',
-};
-
-function convertToFxTwitter(url) {
-  // Convert twitter.com or x.com URLs to fxtwitter.com for better scraping
-  return url
-    .replace(/(?:twitter\.com|x\.com)/i, 'fxtwitter.com');
-}
 
 function extractTweetId(url) {
   const match = url.match(/status\/(\d+)/);
@@ -21,46 +8,44 @@ function extractTweetId(url) {
 async function scrapeTwitter(url) {
   try {
     const tweetId = extractTweetId(url);
+    if (!tweetId) {
+      return {
+        success: false,
+        source: 'twitter',
+        error: 'Could not extract tweet ID from URL',
+        data: null
+      };
+    }
 
-    // Try fxtwitter first - it's designed for embedding and has good meta tags
-    const fxUrl = convertToFxTwitter(url);
+    // Use fxtwitter API for structured data
+    const apiUrl = `https://api.fxtwitter.com/status/${tweetId}`;
 
-    const response = await axios.get(fxUrl, {
-      headers: HEADERS,
-      timeout: 10000,
-      maxRedirects: 5
+    const response = await axios.get(apiUrl, {
+      timeout: 10000
     });
 
-    const $ = cheerio.load(response.data);
-
-    // Get image - fxtwitter provides good og:image tags
-    let image =
-      $('meta[property="og:image"]').attr('content') ||
-      $('meta[name="twitter:image"]').attr('content') ||
-      $('meta[name="twitter:image:src"]').attr('content') ||
-      null;
-
-    // Get tweet text as name
-    let name =
-      $('meta[property="og:title"]').attr('content') ||
-      $('meta[name="twitter:title"]').attr('content') ||
-      $('title').text() ||
-      'Twitter Post';
-
-    // Get description (usually the tweet text)
-    let description =
-      $('meta[property="og:description"]').attr('content') ||
-      $('meta[name="twitter:description"]').attr('content') ||
-      $('meta[name="description"]').attr('content') ||
-      '';
-
-    // Clean up - fxtwitter sometimes adds prefixes
-    name = name.replace(/^.*?:\s*/, '').trim();
-
-    // Use description as name if name is too generic
-    if (name.length < 10 && description.length > name.length) {
-      name = description;
+    const tweet = response.data.tweet;
+    if (!tweet) {
+      throw new Error('No tweet data returned');
     }
+
+    // Check for media in the tweet first, then fall back to profile pic
+    let image = null;
+
+    if (tweet.media && tweet.media.photos && tweet.media.photos.length > 0) {
+      // Use first photo from the tweet
+      image = tweet.media.photos[0].url;
+    } else if (tweet.media && tweet.media.videos && tweet.media.videos.length > 0) {
+      // Use video thumbnail
+      image = tweet.media.videos[0].thumbnail_url;
+    } else {
+      // No media - use tweeter's profile pic
+      image = tweet.author.avatar_url;
+    }
+
+    // Get tweet text
+    let name = tweet.text || 'Twitter Post';
+    let description = tweet.text || '';
 
     // Truncate if too long
     if (name.length > 100) {
@@ -75,49 +60,17 @@ async function scrapeTwitter(url) {
         name,
         description,
         tweetId,
+        author: tweet.author.screen_name,
         originalUrl: url
       }
     };
   } catch (error) {
-    // If fxtwitter fails, try vxtwitter
-    try {
-      const vxUrl = url.replace(/(?:twitter\.com|x\.com)/i, 'vxtwitter.com');
-
-      const response = await axios.get(vxUrl, {
-        headers: HEADERS,
-        timeout: 10000,
-        maxRedirects: 5
-      });
-
-      const $ = cheerio.load(response.data);
-
-      let image = $('meta[property="og:image"]').attr('content');
-      let name = $('meta[property="og:description"]').attr('content') || 'Twitter Post';
-      let description = name;
-
-      if (name.length > 100) {
-        name = name.substring(0, 97) + '...';
-      }
-
-      return {
-        success: true,
-        source: 'twitter',
-        data: {
-          image,
-          name,
-          description,
-          tweetId: extractTweetId(url),
-          originalUrl: url
-        }
-      };
-    } catch (fallbackError) {
-      return {
-        success: false,
-        source: 'twitter',
-        error: error.message,
-        data: null
-      };
-    }
+    return {
+      success: false,
+      source: 'twitter',
+      error: error.message,
+      data: null
+    };
   }
 }
 
