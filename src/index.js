@@ -3,7 +3,96 @@ const express = require('express');
 const cors = require('cors');
 const rateLimit = require('express-rate-limit');
 const bs58 = require('bs58').default;
+const { VersionedTransaction, Connection, Keypair } = require('@solana/web3.js');
 const { scrapeUrl } = require('./scrapers');
+
+// Solana setup
+const RPC_ENDPOINT = process.env.RPC_ENDPOINT || 'https://api.mainnet-beta.solana.com';
+const web3Connection = new Connection(RPC_ENDPOINT, 'confirmed');
+
+// Get signer wallet from env
+function getSignerWallet() {
+  if (!process.env.PRIVATE_KEY) {
+    throw new Error('PRIVATE_KEY not set in environment');
+  }
+  return Keypair.fromSecretKey(bs58.decode(process.env.PRIVATE_KEY));
+}
+
+// Download image and convert to Blob
+async function downloadImage(imageUrl) {
+  const response = await fetch(imageUrl);
+  if (!response.ok) throw new Error('Failed to download image');
+  const buffer = await response.arrayBuffer();
+  const contentType = response.headers.get('content-type') || 'image/png';
+  return new Blob([buffer], { type: contentType });
+}
+
+// Launch token on pump.fun via PumpPortal
+async function launchOnPumpFun(coinData) {
+  const signerKeyPair = getSignerWallet();
+  const mintKeypair = Keypair.generate();
+
+  // Step 1: Download image and upload to IPFS
+  const imageBlob = await downloadImage(coinData.image);
+
+  const formData = new FormData();
+  formData.append('file', imageBlob, 'image.png');
+  formData.append('name', coinData.name);
+  formData.append('symbol', coinData.ticker);
+  formData.append('description', coinData.description);
+  formData.append('website', coinData.originalUrl);
+  formData.append('showName', 'true');
+
+  const metadataResponse = await fetch('https://pump.fun/api/ipfs', {
+    method: 'POST',
+    body: formData,
+  });
+
+  if (!metadataResponse.ok) {
+    throw new Error('Failed to upload metadata to IPFS');
+  }
+
+  const metadataJSON = await metadataResponse.json();
+
+  // Step 2: Get create transaction from PumpPortal
+  const response = await fetch('https://pumpportal.fun/api/trade-local', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      publicKey: signerKeyPair.publicKey.toBase58(),
+      action: 'create',
+      tokenMetadata: {
+        name: metadataJSON.metadata.name,
+        symbol: metadataJSON.metadata.symbol,
+        uri: metadataJSON.metadataUri
+      },
+      mint: mintKeypair.publicKey.toBase58(),
+      denominatedInSol: 'true',
+      amount: 0, // no dev buy
+      slippage: 10,
+      priorityFee: 0.0005,
+      pool: 'pump'
+    })
+  });
+
+  if (response.status !== 200) {
+    throw new Error(`PumpPortal error: ${response.statusText}`);
+  }
+
+  // Step 3: Sign and send transaction
+  const data = await response.arrayBuffer();
+  const tx = VersionedTransaction.deserialize(new Uint8Array(data));
+  tx.sign([mintKeypair, signerKeyPair]);
+
+  const signature = await web3Connection.sendTransaction(tx);
+
+  return {
+    signature,
+    mint: mintKeypair.publicKey.toBase58(),
+    txUrl: `https://solscan.io/tx/${signature}`,
+    pumpUrl: `https://pump.fun/${mintKeypair.publicKey.toBase58()}`
+  };
+}
 
 // Validate Solana wallet address
 function isValidSolanaAddress(address) {
@@ -152,7 +241,7 @@ app.post('/launch', limiter, async (req, res) => {
       return res.type('text/plain').status(422).send(`Error: Couldn't fetch that URL\n${scrapeResult.error}`);
     }
 
-    // Step 2: TODO - Launch on pump.fun
+    // Step 2: Launch on pump.fun
     const coinData = {
       ticker: ticker.toUpperCase(),
       name: name.substring(0, 30),
@@ -163,6 +252,14 @@ app.post('/launch', limiter, async (req, res) => {
       wallet: wallet || null
     };
 
+    let launchResult;
+    try {
+      launchResult = await launchOnPumpFun(coinData);
+    } catch (err) {
+      console.error('[API] Pump.fun launch failed:', err);
+      return res.type('text/plain').status(500).send(`Error: Failed to launch on pump.fun\n${err.message}`);
+    }
+
     logRequest({
       endpoint: '/launch',
       ip: req.ip,
@@ -172,7 +269,9 @@ app.post('/launch', limiter, async (req, res) => {
       name: coinData.name,
       image: coinData.image,
       success: true,
-      source: scrapeResult.source
+      source: scrapeResult.source,
+      mint: launchResult.mint,
+      signature: launchResult.signature
     });
 
     // Human-readable response
@@ -182,7 +281,9 @@ COIN LAUNCHED
 
 Name: ${coinData.name}
 Ticker: $${coinData.ticker}
-Source: ${coinData.source}${walletLine}
+CA: ${launchResult.mint}${walletLine}
+
+${launchResult.pumpUrl}
 `.trim();
 
     return res.type('text/plain').send(response);
