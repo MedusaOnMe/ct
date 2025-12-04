@@ -1,5 +1,6 @@
 require('dotenv').config();
 const express = require('express');
+const path = require('path');
 const cors = require('cors');
 const rateLimit = require('express-rate-limit');
 const bs58 = require('bs58').default;
@@ -29,11 +30,19 @@ async function downloadImage(imageUrl) {
 
 // Launch token on pump.fun via PumpPortal
 async function launchOnPumpFun(coinData) {
+  console.log('[LAUNCH] Starting launch process...');
+  console.log('[LAUNCH] Coin data:', JSON.stringify(coinData, null, 2));
+
   const signerKeyPair = getSignerWallet();
+  console.log('[LAUNCH] Signer wallet:', signerKeyPair.publicKey.toBase58());
+
   const mintKeypair = Keypair.generate();
+  console.log('[LAUNCH] Generated mint:', mintKeypair.publicKey.toBase58());
 
   // Step 1: Download image and upload to IPFS
+  console.log('[LAUNCH] Step 1: Downloading image from:', coinData.image);
   const imageBlob = await downloadImage(coinData.image);
+  console.log('[LAUNCH] Image downloaded, size:', imageBlob.size);
 
   const formData = new FormData();
   formData.append('file', imageBlob, 'image.png');
@@ -43,48 +52,61 @@ async function launchOnPumpFun(coinData) {
   formData.append('website', coinData.originalUrl);
   formData.append('showName', 'true');
 
+  console.log('[LAUNCH] Uploading to IPFS...');
   const metadataResponse = await fetch('https://pump.fun/api/ipfs', {
     method: 'POST',
     body: formData,
   });
 
   if (!metadataResponse.ok) {
-    throw new Error('Failed to upload metadata to IPFS');
+    const errorText = await metadataResponse.text();
+    console.error('[LAUNCH] IPFS upload failed:', metadataResponse.status, errorText);
+    throw new Error(`Failed to upload metadata to IPFS: ${metadataResponse.status} ${errorText}`);
   }
 
   const metadataJSON = await metadataResponse.json();
+  console.log('[LAUNCH] IPFS response:', JSON.stringify(metadataJSON, null, 2));
 
   // Step 2: Get create transaction from PumpPortal
+  console.log('[LAUNCH] Step 2: Getting transaction from PumpPortal...');
+  const pumpPortalBody = {
+    publicKey: signerKeyPair.publicKey.toBase58(),
+    action: 'create',
+    tokenMetadata: {
+      name: metadataJSON.metadata.name,
+      symbol: metadataJSON.metadata.symbol,
+      uri: metadataJSON.metadataUri
+    },
+    mint: mintKeypair.publicKey.toBase58(),
+    denominatedInSol: 'true',
+    amount: 0, // no dev buy
+    slippage: 10,
+    priorityFee: 0.0005,
+    pool: 'pump'
+  };
+  console.log('[LAUNCH] PumpPortal request:', JSON.stringify(pumpPortalBody, null, 2));
+
   const response = await fetch('https://pumpportal.fun/api/trade-local', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      publicKey: signerKeyPair.publicKey.toBase58(),
-      action: 'create',
-      tokenMetadata: {
-        name: metadataJSON.metadata.name,
-        symbol: metadataJSON.metadata.symbol,
-        uri: metadataJSON.metadataUri
-      },
-      mint: mintKeypair.publicKey.toBase58(),
-      denominatedInSol: 'true',
-      amount: 0, // no dev buy
-      slippage: 10,
-      priorityFee: 0.0005,
-      pool: 'pump'
-    })
+    body: JSON.stringify(pumpPortalBody)
   });
 
   if (response.status !== 200) {
-    throw new Error(`PumpPortal error: ${response.statusText}`);
+    const errorText = await response.text();
+    console.error('[LAUNCH] PumpPortal error:', response.status, errorText);
+    throw new Error(`PumpPortal error: ${response.status} ${errorText}`);
   }
 
   // Step 3: Sign and send transaction
+  console.log('[LAUNCH] Step 3: Signing and sending transaction...');
   const data = await response.arrayBuffer();
   const tx = VersionedTransaction.deserialize(new Uint8Array(data));
   tx.sign([mintKeypair, signerKeyPair]);
 
+  console.log('[LAUNCH] Sending to Solana...');
   const signature = await web3Connection.sendTransaction(tx);
+  console.log('[LAUNCH] Transaction sent! Signature:', signature);
 
   return {
     signature,
@@ -133,17 +155,12 @@ app.use(cors());
 app.use(express.json());
 app.use(express.text()); // Accept plain text too
 
-// Health check
+// Serve static files from public folder
+app.use(express.static(path.join(__dirname, '../public')));
+
+// Landing page
 app.get('/', (req, res) => {
-  res.json({
-    name: 'CoinThis API',
-    version: '1.0.0',
-    status: 'running',
-    endpoints: {
-      'POST /scrape': 'Scrape metadata from any URL',
-      'POST /launch': 'Scrape + launch coin (pump.fun integration coming soon)'
-    }
-  });
+  res.sendFile(path.join(__dirname, '../public/index.html'));
 });
 
 // Scrape endpoint - just returns the scraped metadata
@@ -232,7 +249,13 @@ app.post('/launch', limiter, async (req, res) => {
       return res.type('text/plain').status(400).send('Error: Name must be 30 characters or less');
     }
 
-    console.log(`[API] Launching coin - URL: ${url}, Ticker: ${ticker}, Name: ${name}, Wallet: ${wallet || 'none'}`);
+    console.log(`[API] ===========================================`);
+    console.log(`[API] LAUNCH REQUEST RECEIVED`);
+    console.log(`[API] URL: ${url}`);
+    console.log(`[API] Ticker: ${ticker}`);
+    console.log(`[API] Name: ${name}`);
+    console.log(`[API] Wallet: ${wallet || 'none'}`);
+    console.log(`[API] ===========================================`);
 
     // Step 1: Scrape the URL
     const scrapeResult = await scrapeUrl(url);
